@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Torre Brainrot - El Código Perfecto</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; touch-action: none; }
+        canvas { display: block; margin: 0 auto; box-shadow: 0 0 30px #800080; } 
+    </style>
+</head>
+<body>
+<script>
+// ==========================================
+// ESCENA: MENÚ PRINCIPAL
+// ==========================================
+class MenuScene extends Phaser.Scene {
+    constructor() { super('MenuScene'); }
+    preload() { this.load.image('bg_menu', 'https://labs.phaser.io/assets/skies/space3.png'); }
+    create() {
+        this.cameras.main.fadeIn(1000, 0, 0, 0);
+        this.add.image(400, 300, 'bg_menu').setAlpha(0.6);
+        
+        let title = this.add.text(400, 150, 'TORRE BRAINROT', { fontSize: '55px', fill: '#0f0', fontStyle: 'bold' }).setOrigin(0.5);
+        this.add.text(400, 220, 'EL ALGORITMO DEL PISO 67', { fontSize: '20px', fill: '#fff' }).setOrigin(0.5);
+        this.tweens.add({ targets: title, y: 140, duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+
+        let btn = this.add.text(400, 350, '[ INICIAR PARTIDA ]', { fontSize: '28px', fill: '#0f0', backgroundColor: '#111', padding: { x: 15, y: 10 } }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        
+        btn.on('pointerdown', () => {
+            this.cameras.main.fadeOut(500, 0, 0, 0);
+            this.time.delayedCall(500, () => this.scene.start('Nivel1', { hp: 100 }));
+        }); 
+        this.add.text(400, 480, 'PC: Flechas + Click + Shift\nMÓVIL: Controles en pantalla\nXBOX Compatible', { fontSize: '14px', fill: '#aaa', align: 'center' }).setOrigin(0.5);
+    }
+}
+
+// ==========================================
+// CLASE BASE: Lógica compartida
+// ==========================================
+class NivelBase extends Phaser.Scene {
+    constructor(key) { super(key); }
+
+    init(data) {
+        this.playerHP = data.hp || 100;
+        this.isInvulnerable = false;
+        this.isSmashing = false;
+        this.isPowerUpActive = false;
+        this.isTransitioning = false;
+        this.touch = { left: false, right: false, up: false, down: false };
+    }
+
+    preload() {
+        this.load.image('sky', 'fondo.png'); 
+        this.load.image('platform', 'https://labs.phaser.io/assets/sprites/platform.png');
+        this.load.image('sahur', 'images.jpg'); 
+        this.load.image('descarga', 'descarga.jpg'); 
+        this.load.image('vaca', 'vacasaturno.png'); 
+        this.load.image('tunggod', 'tungtunggod.jpeg');
+        this.load.image('stairs', 'https://labs.phaser.io/assets/sprites/fuji.png');
+        this.load.image('heal', 'https://labs.phaser.io/assets/sprites/firstaid.png'); 
+        this.load.image('powerup', 'https://labs.phaser.io/assets/sprites/star.png'); 
+    }
+
+    createUI(pisoNombre) {
+        this.add.text(20, 20, pisoNombre, { fontSize: '28px', fill: '#0f0', fontStyle: 'bold' }).setScrollFactor(0);
+        this.add.text(20, 60, 'HP', { fontSize: '20px', fill: '#fff', fontStyle: 'bold' }).setScrollFactor(0);
+        this.hpBar = this.add.graphics().setScrollFactor(0);
+        this.drawHealthBar();
+
+        const btnStyle = { fontSize: '40px', fill: '#fff', backgroundColor: '#333', padding: 20, align: 'center' };
+        let bL = this.add.text(30, 480, '◀', btnStyle).setScrollFactor(0).setInteractive().setAlpha(0.6);
+        let bR = this.add.text(140, 480, '▶', btnStyle).setScrollFactor(0).setInteractive().setAlpha(0.6);
+        let bD = this.add.text(85, 540, '▼', btnStyle).setScrollFactor(0).setInteractive().setAlpha(0.6);
+        let bA = this.add.text(550, 480, '⚔️', btnStyle).setScrollFactor(0).setInteractive().setAlpha(0.6);
+        let bJ = this.add.text(660, 480, '▲', btnStyle).setScrollFactor(0).setInteractive().setAlpha(0.6);
+        let bS = this.add.text(605, 410, '💨', btnStyle).setScrollFactor(0).setInteractive().setAlpha(0.6);
+
+        bL.on('pointerdown', () => this.touch.left=true).on('pointerup', () => this.touch.left=false).on('pointerout', () => this.touch.left=false);
+        bR.on('pointerdown', () => this.touch.right=true).on('pointerup', () => this.touch.right=false).on('pointerout', () => this.touch.right=false);
+        bD.on('pointerdown', () => this.touch.down=true).on('pointerup', () => this.touch.down=false).on('pointerout', () => this.touch.down=false);
+        bJ.on('pointerdown', () => this.touch.up=true).on('pointerup', () => this.touch.up=false).on('pointerout', () => this.touch.up=false);
+        bS.on('pointerdown', () => this.executeDash());
+        bA.on('pointerdown', () => this.executeBasicAttack());
+    }
+
+    drawHealthBar() {
+        this.hpBar.clear();
+        this.hpBar.fillStyle(0x000000); this.hpBar.fillRect(60, 60, 204, 24); 
+        this.hpBar.fillStyle(this.playerHP > 30 ? 0x00ff00 : 0xff0000); 
+        this.hpBar.fillRect(62, 62, Math.max(0, this.playerHP * 2), 20); 
+    }
+
+    collectHeal(player, heal) { heal.destroy(); this.playerHP = Math.min(100, this.playerHP + 30); this.drawHealthBar(); this.cameras.main.flash(300, 0, 255, 0); }
+    collectPowerUp(player, p) { p.destroy(); this.isPowerUpActive = true; this.player.setTint(0xffff00); this.cameras.main.flash(300, 255, 255, 0); this.time.delayedCall(5000, () => { this.isPowerUpActive = false; this.player.clearTint(); }); }
+
+    executeDash() { 
+        this.player.setVelocityX(this.player.flipX ? -2500 : 2500); 
+        for(let i=0;i<5;i++){ 
+            this.time.delayedCall(i*30,()=>{
+                let g=this.add.sprite(this.player.x,this.player.y,'sahur').setScale(0.25); 
+                g.flipX=this.player.flipX; g.setAlpha(0.5); 
+                this.tweens.add({targets:g,alpha:0,duration:300,onComplete:()=>g.destroy()});
+            }); 
+        } 
+    }
+
+    executeBasicAttack() {
+        if (this.isPowerUpActive || this.isTransitioning) return;
+        
+        this.player.setTint(0x00ff00); 
+        this.tweens.add({ targets: this.player, angle: this.player.flipX ? -35 : 35, duration: 100, yoyo: true, onComplete: () => { this.player.clearTint(); this.player.angle = 0; } });
+
+        let targets = this.enemies ? this.enemies.getChildren() : [];
+        if (this.flyingEnemies) targets = targets.concat(this.flyingEnemies.getChildren());
+        if (this.boss && this.boss.active && !targets.includes(this.boss)) targets.push(this.boss);
+
+        targets.forEach(e => {
+            if (!e.active) return;
+            let dX = Math.abs(this.player.x - e.x), dY = Math.abs(this.player.y - e.y);
+            let isFwd = this.player.flipX ? (e.x <= this.player.x + 100) : (e.x >= this.player.x - 100);
+            
+            if (dX < 320 && dY < 400 && isFwd) { 
+                this.hitEnemy(e, 20); 
+                if(e.body.allowGravity === false) e.setVelocityY(-150); 
+                else e.setVelocityX(this.player.flipX ? -350 : 350); 
+            }
+        });
+    }
+
+    hitEnemy(enemy, damage) {
+        if(enemy === this.boss) { this.bossHP -= damage; if(this.drawBossHealthBar) this.drawBossHealthBar(); }
+        else { enemy.hp -= damage; }
+        
+        enemy.setTint(0xffffff);
+        this.time.delayedCall(100, () => { 
+            if (enemy.active) {
+                if(enemy.texture.key === 'vaca' || enemy.texture.key === 'tunggod') enemy.setTint(0xff5555);
+                else enemy.clearTint();
+            }
+        });
+
+        let hpCheck = enemy === this.boss ? this.bossHP : enemy.hp;
+        if (hpCheck <= 0) { 
+            if(enemy === this.boss) this.bossDefeated();
+            else { this.tweens.killTweensOf(enemy); enemy.destroy(); }
+        }
+    }
+
+    takeDamage(amount = 20) {
+        if (this.isPowerUpActive || this.isTransitioning || this.isInvulnerable) return; 
+        this.playerHP -= amount; this.drawHealthBar(); this.isInvulnerable = true; this.player.setAlpha(0.5); this.cameras.main.shake(200, 0.02);
+        this.time.delayedCall(1000, () => { this.isInvulnerable = false; this.player.setAlpha(1); });
+        if (this.playerHP <= 0) { this.scene.start('GameOverScene'); }
+    }
+
+    handleControls() {
+        if(this.isTransitioning) return;
+        let pad = this.input.gamepad.pad1;
+        let isLeft = this.cursors.left.isDown || this.touch.left || (pad && pad.axes[0].getValue() < -0.5);
+        let isRight = this.cursors.right.isDown || this.touch.right || (pad && pad.axes[0].getValue() > 0.5);
+        let isUp = this.cursors.up.isDown || this.touch.up || (pad && pad.A);
+        let isDown = this.cursors.down.isDown || this.touch.down || (pad && pad.down);
+        
+        if (pad) { this.padDashPressed = pad.B; this.padAttackPressed = pad.X; }
+        if (Phaser.Input.Keyboard.JustDown(this.keyShift) || (pad && pad.B && !this.padDashPressed)) this.executeDash();
+        if (pad && pad.X && !this.padAttackPressed) this.executeBasicAttack();
+
+        let speed = this.isPowerUpActive ? 650 : 450;
+        if (isLeft) { this.player.setVelocityX(-speed); this.player.flipX = true; } 
+        else if (isRight) { this.player.setVelocityX(speed); this.player.flipX = false; } 
+        else { this.player.setVelocityX(0); }
+
+        // 🚀 GRAVEDAD NERFEADA: Saltos ajustados a la nueva gravedad (más flotantes)
+        let jumpPower = this.isPowerUpActive ? -950 : -800; 
+        if (isUp && this.player.body.touching.down) { this.player.setVelocityY(jumpPower); }
+
+        if (isDown && !this.player.body.touching.down) { this.player.setVelocityY(1500); this.isSmashing = true; }
+        
+        if (this.isSmashing && this.player.body.touching.down) { 
+            this.cameras.main.shake(300, 0.03); 
+            this.isSmashing = false; 
+            let targets = this.enemies ? this.enemies.getChildren() : [];
+            if(this.flyingEnemies) targets = targets.concat(this.flyingEnemies.getChildren());
+            if(this.boss && this.boss.active) targets.push(this.boss);
+            targets.forEach(e => { if (Phaser.Math.Distance.Between(this.player.x, this.player.y, e.x, e.y) < 280) this.hitEnemy(e, 20); });
+        }
+    }
+}
+
+// ==========================================
+// ESCENA 2: NIVEL 1 (PARKOUR NORMAL)
+// ==========================================
+class Nivel1 extends NivelBase {
+    constructor() { super('Nivel1'); }
+    create() {
+        this.cameras.main.fadeIn(500, 0, 0, 0);
+        this.physics.world.setBounds(0, 0, 4000, 1000);
+        this.add.image(400, 300, 'sky').setDisplaySize(800, 600).setScrollFactor(0);
+
+        this.platforms = this.physics.add.staticGroup();
+        for (let i = 0; i < 4000; i += 400) { this.platforms.create(i, 980, 'platform').setScale(2).refreshBody(); }
+        
+        const levels = [ 
+            {x: 600, y: 820}, {x: 1050, y: 660}, {x: 1500, y: 820}, 
+            {x: 1950, y: 660}, {x: 2400, y: 500}, {x: 2850, y: 660}, {x: 3300, y: 820} 
+        ];
+        levels.forEach(p => { this.platforms.create(p.x, p.y, 'platform').setScale(0.5).refreshBody(); });
+
+        this.player = this.physics.add.sprite(100, 800, 'sahur').setScale(0.25);
+        this.player.setCollideWorldBounds(true); this.player.body.setSize(this.player.width, this.player.height, true); 
+        this.player.body.setGravityY(300); // Peso extra reducido
+
+        this.cameras.main.setBounds(0, 0, 4000, 1000); this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+
+        this.enemies = this.physics.add.group(); this.flyingEnemies = this.physics.add.group();
+        this.heals = this.physics.add.group(); this.powerups = this.physics.add.group();
+        
+        for (let i = 0; i < 4; i++) { let e = this.enemies.create(800 + (i * 600), 700, 'descarga').setScale(0.3); e.hp = 40; e.setBounce(0.5).setVelocityX(150).setCollideWorldBounds(true); }
+        
+        // 🦇 VOLADORES CORREGIDOS: Físicas reales, rebotan y no atraviesan plataformas
+        for (let i = 0; i < 3; i++) { 
+            let f = this.flyingEnemies.create(1000 + (i * 800), 400, 'descarga').setScale(0.25).setTint(0x00ffff); 
+            f.hp = 20; 
+            f.body.allowGravity = false; 
+            f.setBounce(1, 1); 
+            f.setCollideWorldBounds(true);
+            f.setVelocity(Math.random() > 0.5 ? 80 : -80, 100); 
+        }
+        
+        this.boss = this.enemies.create(3600, 600, 'vaca').setScale(0.6); this.bossHP = 150; this.boss.setBounce(0.3).setVelocityX(-250).setCollideWorldBounds(true); this.boss.setTint(0xff5555);
+        
+        let h1 = this.heals.create(1050, 600, 'heal').setScale(0.8); 
+        let p1 = this.powerups.create(2400, 440, 'powerup').setScale(0.8); 
+        [h1, p1].forEach(i => { i.body.allowGravity = false; this.tweens.add({ targets: i, y: i.y - 20, duration: 1500, yoyo: true, repeat: -1 }); });
+
+        this.stairs = this.physics.add.sprite(3900, 750, 'stairs');
+
+        this.physics.add.collider(this.player, this.platforms); 
+        this.physics.add.collider(this.enemies, this.platforms); 
+        this.physics.add.collider(this.stairs, this.platforms);
+        
+        // 🦇 NUEVO: Collider para que los voladores choquen con las plataformas
+        this.physics.add.collider(this.flyingEnemies, this.platforms);
+
+        this.physics.add.overlap(this.player, [this.enemies, this.flyingEnemies], (p, e) => { if(!e.active)return; if(this.isPowerUpActive){this.hitEnemy(e,500);return;} if(p.body.velocity.y>0 && p.y<e.y-30){p.setVelocityY(-800);this.hitEnemy(e,20);}else if(!this.isInvulnerable)this.takeDamage(20); }, null, this);
+        this.physics.add.overlap(this.player, this.stairs, this.changeFloor, null, this);
+        this.physics.add.overlap(this.player, this.heals, this.collectHeal, null, this); this.physics.add.overlap(this.player, this.powerups, this.collectPowerUp, null, this);
+
+        this.cursors = this.input.keyboard.createCursorKeys(); this.keyShift = this.input.keyboard.addKey('SHIFT'); this.input.on('pointerdown', () => this.executeBasicAttack());
+        this.createUI('PISO 1: ENTRADA');
+    }
+
+    bossDefeated() { this.boss.destroy(); } 
+
+    changeFloor() {
+        if(this.isTransitioning) return; this.isTransitioning = true; this.player.setVelocity(0);
+        this.add.text(this.player.x, this.player.y - 100, 'ZONA COMPLETADA', { fontSize: '24px', fill: '#0f0', backgroundColor: '#000', padding: 10 }).setOrigin(0.5);
+        this.cameras.main.fadeOut(2000, 0, 0, 0); this.time.delayedCall(2000, () => { this.scene.start('Nivel2', { hp: this.playerHP }); });
+    }
+
+    update() { this.handleControls(); }
+}
+
+// ==========================================
+// ESCENA 3: NIVEL 2 (ZONA DE LAVA)
+// ==========================================
+class Nivel2 extends NivelBase {
+    constructor() { super('Nivel2'); }
+    
+    create() {
+        this.cameras.main.fadeIn(500, 0, 0, 0);
+        this.physics.world.setBounds(0, 0, 4000, 1000);
+        this.add.image(400, 300, 'sky').setDisplaySize(800, 600).setScrollFactor(0).setTint(0xffaaaa); 
+
+        this.platforms = this.physics.add.staticGroup();
+        this.lavas = this.physics.add.staticGroup();
+
+        for (let i = 400; i <= 3600; i += 1600) { this.platforms.create(i, 980, 'platform').setScale(2).refreshBody(); }
+        for (let i = 1200; i <= 2800; i += 1600) { 
+            let lava = this.lavas.create(i, 980, 'platform').setScale(2).refreshBody(); 
+            lava.setTint(0xff3300); 
+        }
+        
+        const levels = [ 
+            {x: 800, y: 820}, {x: 1200, y: 660}, {x: 1600, y: 820}, 
+            {x: 2400, y: 820}, {x: 2800, y: 660}, {x: 3200, y: 820}  
+        ];
+        levels.forEach(p => { this.platforms.create(p.x, p.y, 'platform').setScale(0.5).refreshBody(); });
+
+        this.player = this.physics.add.sprite(100, 800, 'sahur').setScale(0.25);
+        this.player.setCollideWorldBounds(true); this.player.body.setSize(this.player.width, this.player.height, true); 
+        this.player.body.setGravityY(300); // Peso extra reducido
+
+        this.cameras.main.setBounds(0, 0, 4000, 1000); this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+
+        this.enemies = this.physics.add.group(); this.flyingEnemies = this.physics.add.group();
+        this.heals = this.physics.add.group(); this.powerups = this.physics.add.group();
+        
+        for (let i = 0; i < 5; i++) { let e = this.enemies.create(800 + (i * 600), 700, 'descarga').setScale(0.3); e.hp = 40; e.setBounce(0.5).setVelocityX(200).setCollideWorldBounds(true); }
+        
+        // 🦇 VOLADORES CORREGIDOS
+        for (let i = 0; i < 4; i++) { 
+            let f = this.flyingEnemies.create(1000 + (i * 700), 400, 'descarga').setScale(0.25).setTint(0x00ffff); 
+            f.hp = 20; 
+            f.body.allowGravity = false; 
+            f.setBounce(1, 1); 
+            f.setCollideWorldBounds(true);
+            f.setVelocity(Math.random() > 0.5 ? 90 : -90, 120); 
+        }
+        
+        this.boss = this.enemies.create(3600, 600, 'vaca').setScale(0.6); this.bossHP = 200; this.boss.setBounce(0.3).setVelocityX(-300).setCollideWorldBounds(true); this.boss.setTint(0xff0000); 
+        
+        let h1 = this.heals.create(1200, 600, 'heal').setScale(0.8); 
+        let p1 = this.powerups.create(2800, 600, 'powerup').setScale(0.8); 
+        [h1, p1].forEach(i => { i.body.allowGravity = false; this.tweens.add({ targets: i, y: i.y - 20, duration: 1500, yoyo: true, repeat: -1 }); });
+
+        this.stairs = this.physics.add.sprite(3900, 750, 'stairs'); 
+
+        this.physics.add.collider(this.player, this.platforms); this.physics.add.collider(this.enemies, this.platforms); this.physics.add.collider(this.stairs, this.platforms);
+        this.physics.add.collider(this.flyingEnemies, this.platforms); // Collider Voladores
+        
+        this.physics.add.overlap(this.player, [this.enemies, this.flyingEnemies], (p, e) => { if(!e.active)return; if(this.isPowerUpActive){this.hitEnemy(e,500);return;} if(p.body.velocity.y>0 && p.y<e.y-30){p.setVelocityY(-800);this.hitEnemy(e,20);}else if(!this.isInvulnerable)this.takeDamage(20); }, null, this);
+        this.physics.add.overlap(this.player, this.stairs, this.changeFloor, null, this);
+        this.physics.add.overlap(this.player, this.heals, this.collectHeal, null, this); this.physics.add.overlap(this.player, this.powerups, this.collectPowerUp, null, this);
+        
+        this.physics.add.collider(this.player, this.lavas, (p, l) => {
+            if(!this.isInvulnerable && !this.isTransitioning) { this.takeDamage(15); this.cameras.main.flash(200, 255, 0, 0); }
+            p.setVelocityY(-650);
+        }, null, this);
+        this.physics.add.collider(this.enemies, this.lavas);
+        this.physics.add.collider(this.flyingEnemies, this.lavas); // Voladores chocan con lava
+
+        this.cursors = this.input.keyboard.createCursorKeys(); this.keyShift = this.input.keyboard.addKey('SHIFT'); this.input.on('pointerdown', () => this.executeBasicAttack());
+        this.createUI('PISO 2: LAVA');
+    }
+
+    bossDefeated() { this.boss.destroy(); }
+
+    changeFloor() {
+        if(this.isTransitioning) return; this.isTransitioning = true; this.player.setVelocity(0);
+        this.add.text(this.player.x, this.player.y - 100, 'ANOMALÍA DETECTADA... SUBIENDO AL PISO 67', { fontSize: '24px', fill: '#0f0', backgroundColor: '#000', padding: 10 }).setOrigin(0.5);
+        this.cameras.main.fadeOut(2000, 0, 0, 0); this.time.delayedCall(2000, () => { this.scene.start('FinalBossScene', { hp: this.playerHP }); });
+    }
+
+    update() { this.handleControls(); }
+}
+
+// ==========================================
+// ESCENA 4: EL 1V1 FINAL (PISO 67)
+// ==========================================
+class FinalBossScene extends NivelBase {
+    constructor() { super('FinalBossScene'); }
+
+    create() {
+        this.cameras.main.fadeIn(1500, 0, 0, 0);
+        this.physics.world.setBounds(0, 0, 800, 600);
+        this.add.image(400, 300, 'sky').setDisplaySize(800, 600);
+
+        this.platforms = this.physics.add.staticGroup();
+        for (let i = 0; i <= 800; i += 400) { this.platforms.create(i, 580, 'platform').setScale(2).refreshBody(); }
+
+        this.player = this.physics.add.sprite(150, 400, 'sahur').setScale(0.25);
+        this.player.setCollideWorldBounds(true); 
+        this.player.body.setGravityY(300); // Gravedad nerfeada
+
+        // ⚔️ TUNG TUNG GOD BUFFEADO (400 HP)
+        this.boss = this.physics.add.sprite(650, 400, 'tunggod').setScale(0.25); 
+        this.boss.setCollideWorldBounds(true); this.boss.body.setGravityY(500); this.boss.setBounce(0.1).setTint(0xff5555); 
+        this.bossHP = 400;
+
+        this.physics.add.collider(this.player, this.platforms); this.physics.add.collider(this.boss, this.platforms);
+        this.physics.add.overlap(this.player, this.boss, (p, b) => { if(this.isTransitioning) return; if(p.body.velocity.y>0 && p.y<b.y-30){p.setVelocityY(-800);this.hitEnemy(b,30);}else if(!this.isInvulnerable)this.takeDamage(15); }, null, this);
+
+        this.cursors = this.input.keyboard.createCursorKeys(); this.keyShift = this.input.keyboard.addKey('SHIFT'); this.input.on('pointerdown', () => this.executeBasicAttack());
+
+        this.createUI('PISO 67: EL NÚCLEO');
+        
+        this.add.text(450, 60, 'TUNG TUNG GOD', { fontSize: '18px', fill: '#fff' });
+        this.bossHpBar = this.add.graphics();
+        this.drawBossHealthBar();
+
+        this.time.addEvent({ delay: 2500, callback: this.bossLogic, callbackScope: this, loop: true });
+    }
+
+    drawBossHealthBar() {
+        this.bossHpBar.clear(); this.bossHpBar.fillStyle(0x000000); this.bossHpBar.fillRect(610, 60, 154, 20); 
+        this.bossHpBar.fillStyle(0xff0000); 
+        this.bossHpBar.fillRect(612, 62, Math.max(0, (this.bossHP / 400) * 150), 16); // Cálculo ajustado a 400 HP
+    }
+
+    bossLogic() {
+        if (!this.boss.active || this.isTransitioning) return;
+        let action = Phaser.Math.Between(1, 3);
+        this.boss.flipX = this.player.x < this.boss.x;
+        if (action === 1 && this.boss.body.touching.down) { this.boss.setVelocityY(-750); this.boss.setVelocityX(this.boss.flipX ? -150 : 150); } 
+        else if (action === 2) { this.boss.setVelocityX(this.boss.flipX ? -450 : 450); } 
+        else { this.boss.setVelocityX(this.boss.flipX ? -150 : 150); }
+    }
+
+    bossDefeated() {
+        this.isTransitioning = true; this.boss.destroy(); this.cameras.main.flash(2000, 255, 255, 255); 
+        this.time.delayedCall(2000, () => this.scene.start('VictoryScene')); 
+    }
+
+    update() { this.handleControls(); }
+}
+
+// ==========================================
+// ESCENAS COMPLEMENTARIAS
+// ==========================================
+class GameOverScene extends Phaser.Scene {
+    constructor() { super('GameOverScene'); }
+    create() {
+        this.add.text(400, 200, 'EL BRAINROT TE HA CONSUMIDO', { fontSize: '32px', fill: '#f00', fontStyle: 'bold' }).setOrigin(0.5);
+        let btn = this.add.text(400, 350, '[ INTENTAR DE NUEVO ]', { fontSize: '24px', fill: '#fff', backgroundColor: '#333', padding: 10 }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', () => this.scene.start('MenuScene'));
+    }
+}
+
+class VictoryScene extends Phaser.Scene {
+    constructor() { super('VictoryScene'); }
+    create() {
+        this.add.text(400, 200, '¡NÚCLEO DESTRUIDO!', { fontSize: '40px', fill: '#0f0', fontStyle: 'bold' }).setOrigin(0.5);
+        this.add.text(400, 280, 'Tung Tung Sahur ha salvado el universo digital.\nGracias por jugar.', { fontSize: '20px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+        let btn = this.add.text(400, 400, '[ VOLVER AL MENÚ ]', { fontSize: '24px', fill: '#0f0', backgroundColor: '#111', padding: 10 }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', () => this.scene.start('MenuScene'));
+    }
+}
+
+// ==========================================
+// CONFIGURACIÓN PRINCIPAL (Gravedad Nerfeada a 1400)
+// ==========================================
+const config = {
+    type: Phaser.AUTO, 
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: 800, height: 600 },
+    input: { gamepad: true }, 
+    physics: { default: 'arcade', arcade: { gravity: { y: 1400 }, debug: false } }, // Gravedad global menor
+    scene: [MenuScene, Nivel1, Nivel2, FinalBossScene, GameOverScene, VictoryScene] 
+};
+new Phaser.Game(config);
+</script>
+</body>
+</html>
